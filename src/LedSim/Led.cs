@@ -3,10 +3,12 @@ using Spectre.Console.Rendering;
 
 namespace LedSim;
 
-public class Led
+public class Led : IDisposable
 {
     private readonly Color[,] _colors;
     private readonly Color _defaultColor;
+    private readonly Table _table;
+    private readonly CancellationTokenSource _cts = new();
 
     public Led(int columnCount, int rowCount) : this(columnCount, rowCount, Color.Black)
     {
@@ -16,8 +18,19 @@ public class Led
     {
         _colors = new Color[columnCount, rowCount];
         _defaultColor = defaultColor;
-        Clear();
+        _table = new Table
+        {
+            ShowHeaders = false,
+            ShowRowSeparators = true,
+            ShowFooters = false,
+        };
+
         Render();
+
+        Console.CancelKeyPress += delegate
+        {
+            Dispose();
+        };
     }
 
     public Color this[int column, int row]
@@ -26,7 +39,7 @@ public class Led
         set
         {
             _colors[column, row] = value;
-            Render();
+            _table.Rows.Update(row, column, GetText(value));
         }
     }
 
@@ -35,30 +48,22 @@ public class Led
         Task.Delay(milliseconds).GetAwaiter().GetResult();
     }
 
-    public void Clear(bool renderOnClear = true)
+    public void Clear()
     {
         for (int row = 0; row < _colors.GetLength(1); row++)
         {
             for (byte col = 0; col < _colors.GetLength(0); col++)
             {
-                _colors[col, row] = _defaultColor;
+                this[col, row] = _defaultColor;
             }
         }
-
-        if (renderOnClear)
-            Render();
     }
 
     private void Render()
     {
-        var grid = new Grid();
-
         for (byte col = 0; col < _colors.GetLength(0); col++)
         {
-            grid.AddColumn(new GridColumn()
-            {
-                Padding = new Padding(0, 0, 2, 0),
-            });
+            _table.AddColumn(new TableColumn(string.Empty));
         }
 
         for (byte row = 0; row < _colors.GetLength(1); row++)
@@ -66,13 +71,31 @@ public class Led
             var cells = new List<IRenderable>();
             for (byte col = 0; col < _colors.GetLength(0); col++)
             {
-                cells.Add(new Text("  ", new Style(null, _colors[col, row])));
+                cells.Add(GetText(_defaultColor));
             }
-            grid.AddRow(cells.ToArray());
-            grid.AddEmptyRow();
+            _table.AddRow(cells.ToArray());
         }
 
-        AnsiConsole.Clear();
-        AnsiConsole.Write(grid);
+        Task.Run(() =>
+            AnsiConsole.Live(_table)
+                .AutoClear(false)
+                .StartAsync(ctx =>
+                {
+                    while (true)
+                    {
+                        ctx.Refresh();
+                    }
+                }), _cts.Token);
+    }
+
+    private Text GetText(Color color)
+    {
+        return new Text("  ", new Style(null, color));
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
     }
 }
